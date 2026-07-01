@@ -83,10 +83,13 @@ try:
     horario = data['hourly']
     diario = data['daily']
     
-    # Extraer el amanecer y atardecer del día de hoy (índice 0)
-    # Formateamos el string para que solo muestre la hora HH:MM de forma limpia
+    # Extraer el amanecer y atardecer del día de hoy (índice 0) y mañana (índice 1)
     hora_salida = pd.to_datetime(diario['sunrise'][0]).strftime('%H:%M')
     hora_oculto = pd.to_datetime(diario['sunset'][0]).strftime('%H:%M')
+    
+    # NUEVAS LÍNEAS PARA EL DÍA SIGUIENTE:
+    hora_salida_manana = pd.to_datetime(diario['sunrise'][1]).strftime('%H:%M')
+    hora_oculto_manana = pd.to_datetime(diario['sunset'][1]).strftime('%H:%M')
     
     # Generar DataFrame Horario Inicial
     df_raw = pd.DataFrame({
@@ -155,11 +158,13 @@ try:
     heladas_h = df_raw[df_raw["Temp (°C)"] <= 1.5].shape[0]
     c3.metric("Horas críticas de Helada", f"{heladas_h} hrs")
 
-    # Nueva fila con los datos de luz solar del día actual
+    # Nueva fila con los datos de luz solar de Hoy y Mañana
     st.markdown("---")
-    c_luz1, c_luz2 = st.columns(2)
+    c_luz1, c_luz2, c_luz3, c_luz4 = st.columns(4)
     c_luz1.metric("🌅 Salida del Sol (Hoy)", f"{hora_salida} hrs")
     c_luz2.metric("🌇 Puesta del Sol (Hoy)", f"{hora_oculto} hrs")
+    c_luz3.metric("🌅 Salida del Sol (Mañana)", f"{hora_salida_manana} hrs")
+    c_luz4.metric("🌇 Puesta del Sol (Mañana)", f"{hora_oculto_manana} hrs")
     st.markdown("---")
 
     # --- TABLA DE DATOS OPTIMIZADA (CADA 3 HORAS) ---
