@@ -36,21 +36,17 @@ def extraer_poligono_kml(bytes_data):
         if len(parts) >= 2: puntos.append((float(parts[0]), float(parts[1])))
     return Polygon(puntos)
 
-# --- 4. CONSULTA API METEOROLÓGICA ---
+# --- 4. CONSULTA API METEOROLÓGICA (ENDPOINT AGRO / GLOBAL) ---
 def consultar_api_agro(lat, lon, dias):
+    # Usamos el endpoint de forecast estándar pero añadiendo la variable et0 de agricultura
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
         "latitude": lat,
         "longitude": lon,
         "forecast_days": dias,
-        "hourly": [
-            "temperature_2m", "relative_humidity_2m", "dew_point_2m", 
-            "precipitation", "weather_code", "windspeed_10m", 
-            "et0_fao_evapotranspiration", "shortwave_radiation"
-        ],
+        "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation,weather_code,windspeed_10m,et0_fao_evapotranspiration,shortwave_radiation",
         "timezone": "auto"
     }
-    # Corregido: timeout asignado explícitamente como palabra clave
     r = requests.get(url, params=params, timeout=15)
     return r.json()
 
@@ -84,19 +80,25 @@ if poligono_predio and st.sidebar.button("📊 Generar Reporte Técnico", use_co
     
     try:
         data = consultar_api_agro(centroide.y, centroide.x, DIAS_ANALISIS)
+        
+        # Validación de seguridad: Imprimir respuesta si no viene la clave esperada
+        if 'hourly' not in data:
+            st.error(f"❌ La API no retornó datos horarios. Mensaje de la API: {data.get('reason', 'Desconocido')}")
+            st.stop()
+            
         horario = data['hourly']
         
-        # Generar DataFrame Horario Inicial
+        # Generar DataFrame Horario Inicial con verificación de llaves corregidas
         df_raw = pd.DataFrame({
-            "Fecha/Hora": pd.to_datetime(horario['time']),
-            "Temp (°C)": horario['temperature_2m'],
-            "Humedad (%)": horario['relative_humidity_2m'],
-            "Pto Rocío (°C)": horario['dew_point_2m'],
-            "Precip (mm)": horario['precipitation'],
-            "Viento (km/h)": horario['windspeed_10m'],
-            "ET0 (mm/h)": horario['et0_fao_evapotranspiration'],
-            "Radiacion (W/m²)": horario['shortwave_radiation'],
-            "wmo": horario['weather_code']
+            "Fecha/Hora": pd.to_datetime(horario.get('time')),
+            "Temp (°C)": horario.get('temperature_2m'),
+            "Humedad (%)": horario.get('relative_humidity_2m'),
+            "Pto Rocío (°C)": horario.get('dew_point_2m'),
+            "Precip (mm)": horario.get('precipitation'),
+            "Viento (km/h)": horario.get('windspeed_10m'),
+            "ET0 (mm/h)": horario.get('et0_fao_evapotranspiration'),
+            "Radiacion (W/m²)": horario.get('shortwave_radiation'),
+            "wmo": horario.get('weather_code')
         })
 
         # --- FILTRO ESTRATÉGICO: CADA 3 HORAS ---
@@ -149,7 +151,7 @@ if poligono_predio and st.sidebar.button("📊 Generar Reporte Técnico", use_co
         litros_totales = et0_total_mm * area_m2
         c2.metric("Evapotranspiración Total", f"{et0_total_mm:.1f} mm", f"-{litros_totales:,.0f} L H₂O")
         
-        heladas_h = df_raw[df_raw["temperature_2m"] <= 1.5].shape[0]
+        heladas_h = df_raw[df_raw["Temp (°C)"] <= 1.5].shape[0]
         c3.metric("Horas críticas de Helada", f"{heladas_h} hrs")
 
         # --- MAPA SATELITAL DE ALTA DEFINICIÓN ---
