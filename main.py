@@ -154,30 +154,6 @@ if poligono_predio and st.sidebar.button("📊 Generar Reporte Técnico", use_co
         heladas_h = df_raw[df_raw["Temp (°C)"] <= 1.5].shape[0]
         c3.metric("Horas críticas de Helada", f"{heladas_h} hrs")
 
-        # --- MAPA SATELITAL DE ALTA DEFINICIÓN ---
-        st.subheader("🗺️ Vista Satelital de Alta Definición (Predio Analizado)")
-        puntos_ajustados = [[p[0], p[1]] for p in vertices_para_render]
-        puntos_ajustados.append(puntos_ajustados[0]) # Cerrar geometría
-        
-        capa_poligono = pdk.Layer(
-            "PolygonLayer",
-            pd.DataFrame([{"polygon": puntos_ajustados}]),
-            get_polygon="polygon",
-            get_fill_color=[142, 68, 173, 70],
-            get_line_color=[255, 255, 255, 255],
-            get_line_width=2,
-            filled=True,
-            stroked=True
-        )
-
-        view_state = pdk.ViewState(latitude=centroide.y, longitude=centroide.x, zoom=16, pitch=0)
-        
-        st.pydeck_chart(pdk.Deck(
-            map_style="mapbox://styles/mapbox/satellite-v9", 
-            initial_view_state=view_state, 
-            layers=[capa_poligono]
-        ))
-
         # --- TABLA DE DATOS OPTIMIZADA (CADA 3 HORAS) ---
         st.subheader("📋 Matriz Operativa de Campo (Bloques de 3 Horas)")
         
