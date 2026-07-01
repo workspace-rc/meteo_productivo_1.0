@@ -50,4 +50,4 @@ def consultar_api_agro(lat, lon, dias):
         ],
         "timezone": "auto"
     }
-    r = requests.get(url, params=params, timeout
+    r = requests.get(url, params=params, timeout)
