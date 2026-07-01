@@ -46,7 +46,7 @@ DIAS_ANALISIS = st.sidebar.slider("Días de proyección", 1, 7, 3)
 # --- 6. PROCESAMIENTO AUTOMÁTICO ---
 # El sistema busca el archivo directamente en la raíz de la app
 NOMBRE_PREDIO = "Viñedo_Quilquiwine"
-archivo_fijo = "Vinedo_Quilquiwine.geojson"
+archivo_fijo = "vinedo_quilquiwine.geojson"
 
 try:
     poligono_predio = cargar_poligono_local(archivo_fijo)
