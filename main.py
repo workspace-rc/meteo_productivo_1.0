@@ -1,5 +1,6 @@
 import json
 import re
+import os
 import requests
 import streamlit as st
 import pandas as pd
@@ -16,9 +17,12 @@ def interpretar_wmo(codigo):
         if codigo == 99: return "🚨 Tormenta + Granizo Severo"
     return "☀️ Estable"
 
-# --- 3. EXTRACTOR GEOGRÁFICO LOCAL ---
-def cargar_poligono_local(ruta_archivo):
-    with open(ruta_archivo, 'r', encoding='utf-8') as f:
+# --- 3. EXTRACTOR GEOGRÁFICOS CON RUTA ABSOLUTA ---
+def cargar_poligono_local(nombre_archivo):
+    ruta_actual = os.path.dirname(__file__) if "__file__" in locals() else os.getcwd()
+    ruta_completa = os.path.join(ruta_actual, nombre_archivo)
+    
+    with open(ruta_completa, 'r', encoding='utf-8') as f:
         js = json.load(f)
     geom = js["features"][0]["geometry"] if js.get("type") == "FeatureCollection" else js.get("geometry", js)
     sh_geom = shape(geom)
@@ -26,7 +30,7 @@ def cargar_poligono_local(ruta_archivo):
     if sh_geom.geom_type == 'MultiPolygon': return max(sh_geom.geoms, key=lambda p: p.area)
     raise ValueError("No se encontró un polígono válido.")
 
-# --- 4. CONSULTA API METEOROLÓGICA ---
+# --- 4. CONSULTA API METEOROLÓGICA (HORARIA Y DIARIA) ---
 def consultar_api_agro(lat, lon, dias):
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -34,6 +38,7 @@ def consultar_api_agro(lat, lon, dias):
         "longitude": lon,
         "forecast_days": dias,
         "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation,weather_code,windspeed_10m,et0_fao_evapotranspiration,shortwave_radiation",
+        "daily": "sunrise,sunset",  # <-- Solicitamos los datos astronómicos diarios
         "timezone": "auto"
     }
     r = requests.get(url, params=params, timeout=15)
@@ -44,8 +49,8 @@ st.sidebar.header("🍇 Parámetros Operativos")
 DIAS_ANALISIS = st.sidebar.slider("Días de proyección", 1, 7, 3)
 
 # --- 6. PROCESAMIENTO AUTOMÁTICO ---
-# El sistema busca el archivo directamente en la raíz de la app
-NOMBRE_PREDIO = "Viñedo_Quilquiwine"
+# Se utiliza el nombre estandarizado en minúsculas para evitar fallas de servidores Linux
+NOMBRE_PREDIO = "Viñedo Quilquiwine"
 archivo_fijo = "vinedo_quilquiwine.geojson"
 
 try:
@@ -53,14 +58,15 @@ try:
     vertices_para_render = list(poligono_predio.exterior.coords)
     centroide = poligono_predio.centroid
     
-    # Conversión métrica aproximada para Chile Central
+    # Conversión métrica para Chile Central
     vertices_m = [(p[0] * 111320 * 0.82, p[1] * 111320) for p in vertices_para_render]
     area_m2 = Polygon(vertices_m).area
     hectareas = area_m2 / 10000
     
-    st.sidebar.success(f"✅ Predio: {NOMBRE_PREDIO}\n({hectareas:.2f} Ha Detectadas)")
+    st.sidebar.success(f"✅ Predio Enlazado\n({hectareas:.2f} Ha Detectadas)")
 except Exception as e:
     st.error(f"❌ Error al cargar la base de datos geográfica del repositorio: {e}")
+    st.info("💡 Asegúrate de que el archivo en GitHub se llame exactamente 'vinedo_quilquiwine.geojson' en minúsculas.")
     st.stop()
 
 # --- 7. EJECUCIÓN DEL REPORTE AUTOMÁTICO ---
@@ -70,11 +76,17 @@ st.markdown(f"**Predio Activo:** {NOMBRE_PREDIO} | **Coordenadas Centrales:** {c
 try:
     data = consultar_api_agro(centroide.y, centroide.x, DIAS_ANALISIS)
     
-    if 'hourly' not in data:
-        st.error(f"❌ La API no retornó datos horarios.")
+    if 'hourly' not in data or 'daily' not in data:
+        st.error(f"❌ La API no retornó la estructura de datos requerida.")
         st.stop()
         
     horario = data['hourly']
+    diario = data['daily']
+    
+    # Extraer el amanecer y atardecer del día de hoy (índice 0)
+    # Formateamos el string para que solo muestre la hora HH:MM de forma limpia
+    hora_salida = pd.to_datetime(diario['sunrise'][0]).strftime('%H:%M')
+    hora_oculto = pd.to_datetime(diario['sunset'][0]).strftime('%H:%M')
     
     # Generar DataFrame Horario Inicial
     df_raw = pd.DataFrame({
@@ -115,7 +127,7 @@ try:
         else:
             alertas_clima.append("✅ Estable")
             
-        # 3. Estado de Luz
+        # 3. Estado de Luz de la fila
         hora_act = row["Fecha/Hora"].hour
         if row["Radiacion (W/m²)"] > 0:
             if hora_act in [6, 9]:
@@ -131,7 +143,8 @@ try:
     df["Alertas Clima"] = alertas_clima
     df["Luz Solar"] = luz_sol
 
-    # --- VISUALIZACIÓN DE MÉTRICAS ---
+    # --- VISUALIZACIÓN DE MÉTRICAS OPERATIVAS ---
+    # Fila superior de tarjetas principales
     c1, c2, c3 = st.columns(3)
     c1.metric("Superficie Viñedo", f"{hectareas:.2f} Ha")
     
@@ -141,6 +154,13 @@ try:
     
     heladas_h = df_raw[df_raw["Temp (°C)"] <= 1.5].shape[0]
     c3.metric("Horas críticas de Helada", f"{heladas_h} hrs")
+
+    # Nueva fila con los datos de luz solar del día actual
+    st.markdown("---")
+    c_luz1, c_luz2 = st.columns(2)
+    c_luz1.metric("🌅 Salida del Sol (Hoy)", f"{hora_salida} hrs")
+    c_luz2.metric("🌇 Puesta del Sol (Hoy)", f"{hora_oculto} hrs")
+    st.markdown("---")
 
     # --- TABLA DE DATOS OPTIMIZADA (CADA 3 HORAS) ---
     st.subheader("📋 Matriz Operativa de Campo (Bloques de 3 Horas)")
