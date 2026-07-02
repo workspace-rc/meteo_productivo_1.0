@@ -172,7 +172,7 @@ try:
     
     columnas_finales = [
         "Temp (°C)", "Humedad (%)", "Pto Rocío (°C)", 
-        "Precip (mm)", "Viento (km/h)", "Luz Solar", 
+        "Precip (mm)", "Viento (km/h)", 
         "R-Fito (Hongos)", "Alertas Clima"
     ]
     st.dataframe(df.set_index("Fecha/Hora")[columnas_finales], use_container_width=True)
