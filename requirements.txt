@@ -1,5 +1,6 @@
 streamlit
 requests
 pandas
-pydeck
 shapely
+timezonefinder
+pytz
