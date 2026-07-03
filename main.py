@@ -112,6 +112,28 @@ try:
     hora_oculto = formatear_hora_local(diario['sunset'][0], zona_horaria_local)
     hora_salida_manana = formatear_hora_local(diario['sunrise'][1], zona_horaria_local)
     hora_oculto_manana = formatear_hora_local(diario['sunset'][1], zona_horaria_local)
+
+    # Conversión base astronómica corregida por huso horario
+    dt_sunrise_0 = datetime.fromisoformat(diario['sunrise'][0].replace('Z','')).replace(tzinfo=pytz.utc).astimezone(pytz.timezone(zona_horaria_local))
+    dt_sunset_0 = datetime.fromisoformat(diario['sunset'][0].replace('Z','')).replace(tzinfo=pytz.utc).astimezone(pytz.timezone(zona_horaria_local))
+    
+    dt_sunrise_1 = datetime.fromisoformat(diario['sunrise'][1].replace('Z','')).replace(tzinfo=pytz.utc).astimezone(pytz.timezone(zona_horaria_local))
+    dt_sunset_1 = datetime.fromisoformat(diario['sunset'][1].replace('Z','')).replace(tzinfo=pytz.utc).astimezone(pytz.timezone(zona_horaria_local))
+
+    # --- MODELO OPERATIVO DE CONO DE SOMBRA (MÁSCARA TOPOGRÁFICA) ---
+    # Debido a la proximidad del Cerro Lolog al norte/noreste y cordones del oeste,
+    # el sol físico aparece más tarde y se oculta antes tras el cordón montañoso.
+    # En latitudes -40° (Patagonia) en invierno, el sol viaja con un ángulo crítico muy bajo.
+    
+    MINUTOS_RETRASO_AMANECER = 25  # El sol tarda en superar el filo oriental de la sierra
+    MINUTOS_ADELANTO_OCASO = 42    # El cono de sombra del cerro y cordón oeste cubre el viñedo antes
+    
+    # Aplicación de los deltas topográficos corregidos por relieve
+    hora_salida = (dt_sunrise_0 + pd.Timedelta(minutes=MINUTOS_RETRASO_AMANECER)).strftime('%H:%M')
+    hora_oculto = (dt_sunset_0 - pd.Timedelta(minutes=MINUTOS_ADELANTO_OCASO)).strftime('%H:%M')
+    
+    hora_salida_manana = (dt_sunrise_1 + pd.Timedelta(minutes=MINUTOS_RETRASO_AMANECER)).strftime('%H:%M')
+    hora_oculto_manana = (dt_sunset_1 - pd.Timedelta(minutes=MINUTOS_ADELANTO_OCASO)).strftime('%H:%M')
     
     # Generar DataFrame Horario Inicial
     df_raw = pd.DataFrame({
