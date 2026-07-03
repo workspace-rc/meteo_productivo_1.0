@@ -33,7 +33,7 @@ def cargar_poligono_local(nombre_archivo):
     if sh_geom.geom_type == 'MultiPolygon': return max(sh_geom.geoms, key=lambda p: p.area)
     raise ValueError("No se encontró un polígono válido.")
 
-# --- 4. CONSULTA API METEOROLÓGICA (CON REINTENTOS AUTOMÁTICOS) ---
+# --- 4. CONSULTA API METEOROLÓGICA (FORZANDO UTC) ---
 def consultar_api_agro(lat, lon, dias):
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -42,7 +42,7 @@ def consultar_api_agro(lat, lon, dias):
         "forecast_days": dias,
         "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation,weather_code,windspeed_10m,et0_fao_evapotranspiration,shortwave_radiation",
         "daily": "sunrise,sunset",
-        "timezone": "auto"
+        "timezone": "UTC"  # <-- CAMBIO CLAVE: Obligamos a la API a responder en UTC puro
     }
     
     for intento in range(3):
@@ -50,8 +50,7 @@ def consultar_api_agro(lat, lon, dias):
             r = requests.get(url, params=params, timeout=30)
             return r.json()
         except requests.exceptions.Timeout:
-            if intento == 2:
-                raise Exception("La API de Open-Meteo está saturada. Inténtalo de nuevo.")
+            if intento == 2: raise Exception("API Saturada.")
             continue
 
 # --- 5. INTERFAZ LATERAL (CONTROL DE TIEMPO) ---
@@ -67,7 +66,7 @@ try:
     vertices_para_render = list(poligono_predio.exterior.coords)
     centroide = poligono_predio.centroid
     
-    # Conversión métrica para Chile Central
+    # Conversión métrica
     vertices_m = [(p[0] * 111320 * 0.82, p[1] * 111320) for p in vertices_para_render]
     area_m2 = Polygon(vertices_m).area
     hectareas = area_m2 / 10000
@@ -100,7 +99,9 @@ try:
     
     # FUNCIÓN CORREGIDA: Convierte los ISO timestamps UTC de la API al huso horario del predio
     def formatear_hora_local(timestamp_str, zona_str):
-        # Open-Meteo devuelve formatos tipo "2026-07-03T07:42"
+        if timestamp_str.endswith('Z'):
+            timestamp_str = timestamp_str[:-1]
+            
         dt_utc = datetime.fromisoformat(timestamp_str).replace(tzinfo=pytz.utc)
         tz_local = pytz.timezone(zona_str)
         dt_local = dt_utc.astimezone(tz_local)
