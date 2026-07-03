@@ -5,6 +5,9 @@ import requests
 import streamlit as st
 import pandas as pd
 from shapely.geometry import Polygon, shape
+from timezonefinder import TimezoneFinder
+from datetime import datetime
+import pytz
 
 # --- 1. CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="AgroClima Pro - Viñedos", layout="wide")
@@ -30,7 +33,7 @@ def cargar_poligono_local(nombre_archivo):
     if sh_geom.geom_type == 'MultiPolygon': return max(sh_geom.geoms, key=lambda p: p.area)
     raise ValueError("No se encontró un polígono válido.")
 
-# --- 4. CONSULTA API METEOROLÓGICA (HORARIA Y DIARIA) ---
+# --- 4. CONSULTA API METEOROLÓGICA (CON REINTENTOS AUTOMÁTICOS) ---
 def consultar_api_agro(lat, lon, dias):
     url = "https://api.open-meteo.com/v1/forecast"
     params = {
@@ -38,18 +41,24 @@ def consultar_api_agro(lat, lon, dias):
         "longitude": lon,
         "forecast_days": dias,
         "hourly": "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation,weather_code,windspeed_10m,et0_fao_evapotranspiration,shortwave_radiation",
-        "daily": "sunrise,sunset",  # <-- Solicitamos los datos astronómicos diarios
+        "daily": "sunrise,sunset",
         "timezone": "auto"
     }
-    r = requests.get(url, params=params, timeout=15)
-    return r.json()
+    
+    for intento in range(3):
+        try:
+            r = requests.get(url, params=params, timeout=30)
+            return r.json()
+        except requests.exceptions.Timeout:
+            if intento == 2:
+                raise Exception("La API de Open-Meteo está saturada. Inténtalo de nuevo.")
+            continue
 
 # --- 5. INTERFAZ LATERAL (CONTROL DE TIEMPO) ---
 st.sidebar.header("🍇 Parámetros Operativos")
 DIAS_ANALISIS = st.sidebar.slider("Días de proyección", 1, 7, 3)
 
 # --- 6. PROCESAMIENTO AUTOMÁTICO ---
-# Se utiliza el nombre estandarizado en minúsculas para evitar fallas de servidores Linux
 NOMBRE_PREDIO = "Viñedo Quilquiwine"
 archivo_fijo = "vinedo_quilquiwine.geojson"
 
@@ -66,12 +75,18 @@ try:
     st.sidebar.success(f"✅ Predio Enlazado\n({hectareas:.2f} Ha Detectadas)")
 except Exception as e:
     st.error(f"❌ Error al cargar la base de datos geográfica del repositorio: {e}")
-    st.info("💡 Asegúrate de que el archivo en GitHub se llame exactamente 'vinedo_quilquiwine.geojson' en minúsculas.")
     st.stop()
 
 # --- 7. EJECUCIÓN DEL REPORTE AUTOMÁTICO ---
 st.title(f"🍇 Reporte Agrometeorológico Automatizado")
-st.markdown(f"**Predio Activo:** {NOMBRE_PREDIO} | **Coordenadas Centrales:** {centroide.y:.4f}, {centroide.x:.4f}")
+
+# Determinación matemática del huso horario real basado en las coordenadas
+tf = TimezoneFinder()
+zona_horaria_local = tf.timezone_at(lng=centroide.x, lat=centroide.y)
+if not zona_horaria_local:
+    zona_horaria_local = "UTC" # Respaldo en caso de error extremo
+
+st.markdown(f"**Predio Activo:** {NOMBRE_PREDIO} | **Zona Horaria Detectada:** {zona_horaria_local}")
 
 try:
     data = consultar_api_agro(centroide.y, centroide.x, DIAS_ANALISIS)
@@ -83,13 +98,19 @@ try:
     horario = data['hourly']
     diario = data['daily']
     
-    # Extraer el amanecer y atardecer del día de hoy (índice 0) y mañana (índice 1)
-    hora_salida = pd.to_datetime(diario['sunrise'][0]).strftime('%H:%M')
-    hora_oculto = pd.to_datetime(diario['sunset'][0]).strftime('%H:%M')
-    
-    # NUEVAS LÍNEAS PARA EL DÍA SIGUIENTE:
-    hora_salida_manana = pd.to_datetime(diario['sunrise'][1]).strftime('%H:%M')
-    hora_oculto_manana = pd.to_datetime(diario['sunset'][1]).strftime('%H:%M')
+    # FUNCIÓN CORREGIDA: Convierte los ISO timestamps UTC de la API al huso horario del predio
+    def formatear_hora_local(timestamp_str, zona_str):
+        # Open-Meteo devuelve formatos tipo "2026-07-03T07:42"
+        dt_utc = datetime.fromisoformat(timestamp_str).replace(tzinfo=pytz.utc)
+        tz_local = pytz.timezone(zona_str)
+        dt_local = dt_utc.astimezone(tz_local)
+        return dt_local.strftime('%H:%M')
+
+    # Conversión precisa para Hoy (Índice 0) y Mañana (Índice 1)
+    hora_salida = formatear_hora_local(diario['sunrise'][0], zona_horaria_local)
+    hora_oculto = formatear_hora_local(diario['sunset'][0], zona_horaria_local)
+    hora_salida_manana = formatear_hora_local(diario['sunrise'][1], zona_horaria_local)
+    hora_oculto_manana = formatear_hora_local(diario['sunset'][1], zona_horaria_local)
     
     # Generar DataFrame Horario Inicial
     df_raw = pd.DataFrame({
@@ -110,7 +131,6 @@ try:
     # --- EVALUACIÓN DE ALERTAS AGRO ---
     alertas_fito = []
     alertas_clima = []
-    luz_sol = []
 
     for idx, row in df.iterrows():
         # 1. Alerta de Riesgo Fitosanitario (R-Fito)
@@ -129,25 +149,11 @@ try:
             alertas_clima.append(msg_wmo)
         else:
             alertas_clima.append("✅ Estable")
-            
-        # 3. Estado de Luz de la fila
-        hora_act = row["Fecha/Hora"].hour
-        if row["Radiacion (W/m²)"] > 0:
-            if hora_act in [6, 9]:
-                luz_sol.append("🌅 Primera Luz")
-            elif hora_act in [18, 21]:
-                luz_sol.append("🌇 Última Luz")
-            else:
-                luz_sol.append("☀️ Diurno")
-        else:
-            luz_sol.append("🌙 Nocturno")
 
     df["R-Fito (Hongos)"] = alertas_fito
     df["Alertas Clima"] = alertas_clima
-    df["Luz Solar"] = luz_sol
 
     # --- VISUALIZACIÓN DE MÉTRICAS OPERATIVAS ---
-    # Fila superior de tarjetas principales
     c1, c2, c3 = st.columns(3)
     c1.metric("Superficie Viñedo", f"{hectareas:.2f} Ha")
     
@@ -158,7 +164,7 @@ try:
     heladas_h = df_raw[df_raw["Temp (°C)"] <= 1.5].shape[0]
     c3.metric("Horas críticas de Helada", f"{heladas_h} hrs")
 
-    # Nueva fila con los datos de luz solar de Hoy y Mañana
+    # Fila horizontal con los datos de luz solar corregidos por huso horario
     st.markdown("---")
     c_luz1, c_luz2, c_luz3, c_luz4 = st.columns(4)
     c_luz1.metric("🌅 Salida del Sol (Hoy)", f"{hora_salida} hrs")
@@ -167,7 +173,7 @@ try:
     c_luz4.metric("🌇 Puesta del Sol (Mañana)", f"{hora_oculto_manana} hrs")
     st.markdown("---")
 
-    # --- TABLA DE DATOS OPTIMIZADA (CADA 3 HORAS) ---
+    # --- TABLA DE DATOS OPTIMIZADA (CADA 3 HORAS, SIN COLUMNA LUZ SOLAR) ---
     st.subheader("📋 Matriz Operativa de Campo (Bloques de 3 Horas)")
     
     columnas_finales = [
